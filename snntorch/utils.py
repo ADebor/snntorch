@@ -152,6 +152,7 @@ def reset(net):
     global is_rsynaptic
     global is_sconv2dlstm
     global is_slstm
+    global is_mqif
 
     is_alpha = False
     is_leaky = False
@@ -161,6 +162,7 @@ def reset(net):
     is_lapicque = False
     is_sconv2dlstm = False
     is_slstm = False
+    is_mqif = False
 
     _layer_check(net=net)
 
@@ -178,6 +180,7 @@ def _layer_check(net):
     global is_rsynaptic
     global is_sconv2dlstm
     global is_slstm
+    global is_mqif
 
     for idx in range(len(list(net._modules.values()))):
         if isinstance(list(net._modules.values())[idx], snn.Lapicque):
@@ -196,7 +199,8 @@ def _layer_check(net):
             is_sconv2dlstm = True
         if isinstance(list(net._modules.values())[idx], snn.SLSTM):
             is_slstm = True
-
+        if isinstance(list(net._modules.values())[idx], snn.MQIF):
+            is_mqif = True
 
 def _layer_reset():
     """Reset hidden parameters to zero and detach them from
@@ -226,6 +230,9 @@ def _layer_reset():
     if is_slstm:
         snn.SLSTM.reset_hidden()  # reset hidden state to 0's
         snn.SLSTM.detach_hidden()
+    if is_mqif:
+        snn.MQIF.reset_hidden()
+        snn.MQIF.detach_hidden()
 
 
 def _final_layer_check(net):
@@ -247,6 +254,8 @@ def _final_layer_check(net):
         return 3
     if isinstance(list(net._modules.values())[-1], snn.Alpha):
         return 4
+    if isinstance(list(net._modules.values())[-1], snn.MQIF):
+        return 2
     else:  # if not from snn, assume from nn with 1 return
         return 1
     
