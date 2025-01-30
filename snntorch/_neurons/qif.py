@@ -64,31 +64,26 @@ class MQIF(SpikingNeuron):
             graded_spikes_factor=graded_spikes_factor,
             learn_graded_spikes_factor=learn_graded_spikes_factor,
         )
-        self._init_state(v_init, u_init)
-        self._mqif_register_buffer(
-            eps,
-            learn_eps,
-            u_rest,
-            learn_u_rest,
+        
+        # register state
+        self.register_buffer(
+            "state_init_values", torch.tensor([v_init, u_init]).unsqueeze(0)
         )
-        # self.v_reset = v_reset
-        # self.u_reset = u_reset
+        self._init_state()
+        
+        # register model parameters
+        self.register_buffer(
+            "state_reset_values", torch.tensor([v_reset, u_reset]).unsqueeze(0)
+        )
+        self._eps_register_buffer(eps, learn_eps)
+        self._u_rest_register_buffer(u_rest, learn_u_rest)
         self.register_buffer(
             "dt", torch.tensor(dt)
         )
-        self.register_buffer(
-            "state_reset_values", torch.tensor([v_reset, u_reset])
-        )
-        self.register_buffer(
-            "state_init_values", torch.tensor([v_init, u_init])
-        )
         self.register_buffer("a", torch.tensor(a))
+        
 
-    def _mqif_register_buffer(self, beta, learn_beta, u_rest, learn_u_rest):
-        self._eps_buffer(beta, learn_beta)
-        self._u_rest_buffer(u_rest, learn_u_rest)
-
-    def _eps_buffer(self, eps, learn_eps):
+    def _eps_register_buffer(self, eps, learn_eps):
         if not isinstance(eps, torch.Tensor):
             eps = torch.as_tensor(eps)
         if learn_eps:
@@ -96,7 +91,7 @@ class MQIF(SpikingNeuron):
         else:
             self.register_buffer("eps", eps)
 
-    def _u_rest_buffer(self, u_rest, learn_u_rest):
+    def _u_rest_register_buffer(self, u_rest, learn_u_rest):
         if not isinstance(u_rest, torch.Tensor):
             u_rest = torch.as_tensor(u_rest)
         if learn_u_rest:
@@ -104,40 +99,29 @@ class MQIF(SpikingNeuron):
         else:
             self.register_buffer("u_rest", u_rest)
 
-    # def state_function(self, input_):
-    #     v = self.state[0]
-    #     u = self.state[1]
+    def state_function(self, input_: torch.Tensor):
+        v = self.state[:, 0].clone()    #TODO check that clone is ok
+        u = self.state[:, 1].clone()
 
-    #     self.state[0] = (
-    #         v * (1 + self.dt * v) - self.dt * u**2 + self.dt * input_
-    #     )  # - self.reset * self.v_reset #TODO: reset not ok
-    #     self.state[1] = (1 - self.dt * self.eps) * u + self.dt * self.eps * (
-    #         self.a * v + self.u_rest
-    #     )  # - self.reset * self.u_reset
-
-    def state_function(input_, state, dt, eps, a, u_rest):
-        v = state[0]
-        u = state[1]
-
-        state[0] = (
-            v * (1 + dt * v) - dt * u**2 + dt * input_
+        self.state[:, 0] = (
+            v * (1 + self.dt * v) - self.dt * u**2 + self.dt * input_
         )  # - self.reset * self.v_reset #TODO: reset not ok
-        state[1] = (1 - dt * eps) * u + dt * eps * (
-            a * v + u_rest
+        self.state[:, 1] = (1 - self.dt * self.eps) * u + self.dt * self.eps * (
+            self.a * v + self.u_rest
         )  # - self.reset * self.u_reset
 
-        return state
+        # return state
 
     @property
     def v_shift(self):
-        return self.state[0] - self.threshold
+        return self.state[:, 0] - self.threshold
 
     @property
     def reset(self):
         """Generates detached reset signal if mem > threshold.
         Returns reset."""
-        reset = self.spike_grad(self.v_shift).clone().detach()
-
+        reset = self.spike_grad(self.v_shift).clone().detach().unsqueeze(-1)
+        
         return reset
 
     @property
@@ -152,52 +136,68 @@ class MQIF(SpikingNeuron):
 
         return spk
 
-    def forward(self, input_, state=None):
-        print("input is of shape", input_.shape)
-        "forward model with input current"
-        if not state == None:
-            self.state = state
-
+    def forward(self, input_:torch.Tensor, state=None):
+        """
+        Forwards model with input current.
+        Parameters:
+            input_: torch.Tensor (bs, feature_size), input current.
+            (state): torch.Tensor (bs, feature_size, 2), u-v state of the model.
+        Returns:
+            spk, (state), (prev_state): torch.Tensor, generated binary spike, (state after reset), (state before reset).
+        """
         if self.init_hidden and not state == None:
-            raise TypeError(
-                "`state` should not be passed as an argument while `init_hidden=True`"
-            )
+                raise TypeError(
+                    "`state` should not be passed as an argument while `init_hidden=True`"
+                )
+        # reshape state to (bs*feature_size, 2)
+        if not state == None:
+            self.state = state.reshape((-1, 2)) 
+        
+        # reshape input and reset state
+        batch_size = input_.shape[0]
+        input_ = input_.reshape((batch_size * input_.shape[1]))
 
-        if not self.state.shape[1:] == input_.shape:
-            self.state = (
-                torch.zeros_like(input_, device=self.state.device)
-                .unsqueeze(0)
-                .expand(2, *input_.shape)
-                .clone()
-            )
+        if not self.state.shape[0] == input_.shape[0]:  
+            self.reset_state(batch_size=input_.shape[0])  
 
+        # forward model
         self.state_function(input_)
-        spk = self.fire()  # TODO: useless in non-LIF model ?
+        
+        # detect spikes
+        spk = self.fire()  
 
+        # reset state if spike
         prev_state = self.state.clone().detach()
-        reset = self.reset
         self.state -= self.reset * (self.state - self.state_reset_values)
-        # if reset:
-        #     print("prev", prev_state, "now", self.state)
+        reset = self.reset.any()
+        if reset:
+            print("prev", prev_state, "now", self.state, "reset", self.reset)
+        
+        # output spike and state
         if self.output:
             return (
-                spk,
-                self.state,
+                spk.reshape((batch_size, -1)),
+                self.state.reshape((batch_size, -1, 2)),
                 prev_state,
             )  # TODO: output state before or after reset ??
         elif self.init_hidden:
-            return spk
+            return spk.reshape((batch_size, -1))
         else:
-            return spk, self.state, prev_state
+            return spk.reshape((batch_size, -1)), self.state.reshape((batch_size, -1, 2)), prev_state
 
-    def _init_state(self, v_init, u_init):
+    def _init_state(self):
         "init state variables"
         # state = torch.zeros(2, 0)
-        state = torch.tensor([v_init, u_init])
+        state = self.state_init_values.clone().detach()
         self.register_buffer("state", state, False)
-
-    def reset_state(self):    #TODO: where should we reset the state?
+    
+    def reset_state(self, batch_size=1):    #TODO: where should we reset the state?
         self.state = self.state_init_values.clone().detach()
+
+        expanded_shape = list(self.state.size())
+        expanded_shape[0] = batch_size  
+
+        self.state = self.state.expand(*expanded_shape).clone().detach()
         return self.state
 
     @classmethod
@@ -217,7 +217,8 @@ class MQIF(SpikingNeuron):
         Assumes hidden states have a batch dimension already."""
         for layer in range(len(cls.instances)):
             if isinstance(cls.instances[layer], MQIF):
-                cls.instances[layer].state = cls.instances[layer].reset_state()
+                cls.instances[layer].reset_state()
+                # cls.instances[layer].state = cls.instances[layer].reset_state()
                 # torch.zeros_like(
                 #     cls.instances[layer].state,
                 #     device=cls.instances[layer].state.device,
@@ -376,7 +377,7 @@ if __name__ == "__main__":
     # Small step current input
     extra_cur = 0.55
     eps=.85
-    u_rest=-.85
+    u_rest=.85
     threshold=4
     a=0.1
     v_reset=-0.
@@ -384,16 +385,16 @@ if __name__ == "__main__":
     v_init=-1. 
     u_init=-0.6
     dts=[
-        0.001,
-        0.01,
+        # 0.001,
+        # 0.01,
         0.05,
         0.1, 
-        0.5, 
-        0.75,
-        1.,
+        # 0.5, 
+        # 0.75,
+        # 1.,
     ]
     # input_type = 'step'
-    input_type = 'impulse'
+    # input_type = 'impulse'
 
     for dt in dts:
         mqif = MQIF(
@@ -410,34 +411,37 @@ if __name__ == "__main__":
             dt=dt,
         )
 
-        if input_type == 'impulse':
-            cur_in = torch.cat(
-                (
-                    torch.zeros(int(np.ceil(10 / dt))) + extra_cur,
-                    torch.ones(int(np.ceil(5 / dt))) * 1.,
-                    torch.zeros(int(np.ceil(20 / dt))) + extra_cur,
-                    torch.ones(int(np.ceil(5 / dt))) * -.5,
-                    torch.zeros(int(np.ceil(10 / dt))) + extra_cur,
-                ),
-                0,
-            )
-        elif input_type == 'step':
-            cur_in = torch.cat(
-                (
-                    torch.zeros(int(np.ceil(10 / dt))) + extra_cur,
-                    torch.ones(int(np.ceil(30 / dt))) * 1.,
-                    torch.zeros(int(np.ceil(10 / dt))) + extra_cur,
-                ),
-                0,
-            )
+        # if input_type == 'impulse':
+        cur_in_pulse = torch.cat(
+            (
+                torch.zeros(int(np.ceil(10 / dt))) + extra_cur,
+                torch.ones(int(np.ceil(5 / dt))) * 1.,
+                torch.zeros(int(np.ceil(20 / dt))) + extra_cur,
+                torch.ones(int(np.ceil(5 / dt))) * -.5,
+                torch.zeros(int(np.ceil(10 / dt))) + extra_cur,
+            ),
+            0,
+        )
+        # elif input_type == 'step':
+        cur_in_step = torch.cat(
+            (
+                torch.zeros(int(np.ceil(10 / dt))),
+                torch.ones(int(np.ceil(30 / dt))) * 1.,
+                torch.zeros(int(np.ceil(10 / dt))),
+            ),
+            0,
+        )
         state = mqif.state
-        num_steps = cur_in.shape[0]
+        num_steps = cur_in_pulse.shape[0]
+
+        cur_in = torch.stack([cur_in_pulse, cur_in_step], dim=0)
+        cur_in = cur_in.unsqueeze(1)
         
         mem_rec = []
         spk_rec = []
         
         for step in range(num_steps):
-            spk, state, prev_state = mqif(cur_in[step], state=state)
+            spk, state, prev_state = mqif(cur_in[:, :, step], state=state)
             mem_rec.append(
                 # prev_state
                 state.clone().detach()
@@ -446,20 +450,20 @@ if __name__ == "__main__":
 
         mem_rec = torch.stack(mem_rec)
         spk_rec = torch.stack(spk_rec)
+    
+        cur_types = ["pulse", "step"]        
 
-        plot_cur_mem_spk(
-            cur_in,
-            mem_rec,
-            spk_rec,
-            thr_line=threshold,
-            hline=0.,vline=0.,
-            # ylim_max1=100,
-            title=f"mqif_u_v_trajectory_{input_type}_{extra_cur}_{eps}_{u_rest}_{v_reset}_{u_reset}_{v_init}_{u_init}_{a}_{threshold}_{dt}",
-            u_rest=u_rest, a=a, 
-            # cur_in=cur_in, 
-            v_init=v_init, u_init=u_init,
-            plot_traj=False
-        )
-
-        mem_rec = []
-        spk_rec = []
+        for batch in range(mem_rec.shape[1]):    
+            plot_cur_mem_spk(
+                cur_in[batch, 0, :],
+                mem_rec[:, batch, 0, :],
+                spk_rec[:, batch],
+                thr_line=threshold,
+                hline=0.,vline=0.,
+                # ylim_max1=100,
+                title=f"mqif_u_v_trajectory_{cur_types[batch]}_{extra_cur}_{eps}_{u_rest}_{v_reset}_{u_reset}_{v_init}_{u_init}_{a}_{threshold}_{dt}",
+                u_rest=u_rest, a=a, 
+                # cur_in=cur_in, 
+                v_init=v_init, u_init=u_init,
+                plot_traj=False
+            )
