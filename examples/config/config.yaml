@@ -1,0 +1,40 @@
+defaults:
+  - _self_ 
+  - neuron: mqif
+  - task: mnist
+
+hypers:
+  lr: 1e-3
+  n_epochs: 10
+  batch_size: 128
+  gamma_lr: 0.99
+  n_steps: 150
+  spikegen_gain: 0.5
+
+network_class_mapping:
+  mqif: networks.MQIFNet
+  lif: networks.LIFNet
+
+network_class: ${network_class_mapping.${neuron.name}}  
+
+network:
+  _target_: ${network_class}
+  n_hidden: 128
+  use_synapse: True
+  neuron_params: ${neuron.params}
+  n_steps: ${hypers.n_steps}
+
+task:
+  img_dim: 28
+  n_classes: 10
+
+logger:
+  backend: wandb
+  mode: online
+  project_name: mqif
+  group_name: null
+  entity_name: neuro_eng_uliege
+  exp_name: ${task.name}
+  log_interval: 50 # in number of batches
+  watch_log_freq: 10
+  post_train_visual_n_samples: 5

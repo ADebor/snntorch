@@ -1,0 +1,4 @@
+name: lif
+params:
+  beta: .9
+  threshold: 1.

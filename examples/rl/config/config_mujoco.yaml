@@ -1,0 +1,55 @@
+defaults:
+  - neuron: mqif
+  
+# task and env
+env:
+  env_name: InvertedPendulum-v4
+
+# networks
+network: 
+  policy:
+    layers: [128, 128]
+    use_synapse: True
+    n_steps: 150
+  value:
+
+# collector
+collector:
+  num_envs: 4
+  frames_per_batch: 1024
+  total_frames: 1_000_000
+
+# logger
+logger:
+  backend: wandb
+  project_name: mqif
+  group_name: null
+  entity_name: neuro_eng_uliege
+  exp_name: Mujoco
+  test_interval: 4096
+  num_test_episodes: 5
+  video: True
+
+# Optim
+optim:
+  lr: 3e-4
+  weight_decay: 0.0
+  anneal_lr: True
+  device:
+
+# loss
+loss:
+  gamma: 0.99
+  mini_batch_size: 128
+  ppo_epochs: 10
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  anneal_clip_epsilon: False
+  critic_coef: 0.25
+  entropy_coef: 0.001
+  loss_critic_type: l2
+
+compile:
+  compile: False
+  compile_mode:
+  cudagraphs: False

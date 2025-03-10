@@ -36,4 +36,4 @@ from .slstm import SLSTM
 
 from .leakyparallel import LeakyParallel
 
-from .qif import MQIF
+from .qif import MQIF, FastMQIF
