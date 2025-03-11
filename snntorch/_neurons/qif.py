@@ -22,7 +22,7 @@ class FastMQIF(SpikingNeuron):
         v_reset=0.0,
         u_reset=0.0,
         threshold=10.0,
-        learnable_params=False,
+        learn_params=False,
     ):
         """
         Args:
@@ -44,7 +44,7 @@ class FastMQIF(SpikingNeuron):
         # Convert scalar parameters into tensors
         def param(val):
             return nn.Parameter(
-                torch.tensor(val), requires_grad=learnable_params
+                torch.tensor(val), requires_grad=learn_params
             )
 
         # Model parameters
@@ -53,7 +53,7 @@ class FastMQIF(SpikingNeuron):
         self.a = param(a)
         self.u_rest = param(u_rest)
 
-        # Reset parameters
+        # Reset and init parameters
         self.v_init = v_init
         self.u_init = u_init
         self.v_reset = v_reset
@@ -96,7 +96,7 @@ class FastMQIF(SpikingNeuron):
 
             spikes[:, t, :] = self.spike_fn(
                 v - self.threshold
-            )  # Detect spikes
+            ) # Spikes
             v = torch.where(spikes[:, t, :] > 0, self.v_reset, v)  # Reset v
             u = torch.where(spikes[:, t, :] > 0, self.u_reset, u)  # Reset u
 

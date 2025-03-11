@@ -19,6 +19,4 @@ class RateCoding(nn.Module):
         if lim < 0:
             lim = spks.shape[0]
         spks[lim:] = 0.0
-        return spks.transpose(
-            0, 1
-        )  # batch_size first to match torch.transforms output shape
+        return spks  # batch_size first to match torch.transforms output shape

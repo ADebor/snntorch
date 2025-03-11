@@ -2,7 +2,20 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 from snntorch import spikeplot as splt
+import torch.nn as nn
 
+# wrappers
+def output_last(obj):
+    class Wrapper(nn.Module):
+        def __init__(self, obj, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.obj = obj
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            out = self.obj(x)
+            return out[-1]
+
+    return Wrapper(obj)
 
 # plotting
 def plot_cur_mem_spk(

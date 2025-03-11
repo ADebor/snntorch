@@ -19,10 +19,9 @@ network_class: ${network_class_mapping.${neuron.name}}
 
 network:
   _target_: ${network_class}
-  n_hidden: 128
+  layers: [128]
   use_synapse: True
   neuron_params: ${neuron.params}
-  n_steps: ${hypers.n_steps}
 
 task:
   img_dim: 28

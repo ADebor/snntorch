@@ -183,6 +183,7 @@ def main(cfg: DictConfig):
                         "train/accuracy": accuracy,
                     }
                 )
+            break
         sched.step()
 
         # test
@@ -198,6 +199,7 @@ def main(cfg: DictConfig):
                 test_loss += tmp
                 pred = test_fr.argmax(dim=1, keepdim=True)
                 correct += pred.eq(target.view_as(pred)).sum().item()
+                break
 
         test_loss /= len(test_loader)
         print(
